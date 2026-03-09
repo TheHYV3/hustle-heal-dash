@@ -37,11 +37,14 @@ async function fetchAllData() {
 async function postAction(action, data) {
   const res = await fetch(SCRIPT_URL, {
     method: 'POST',
-    mode: 'no-cors',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, data }),
   });
-  return res;
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || `Failed to perform action: ${action}`);
+  }
+  return json;
 }
 
 function parseParticipant(r) {
@@ -484,49 +487,4 @@ function App(){
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
 </script>
 </body>
-</html>   mode: 'no-cors',
-   headers: { 'Content-Type': 'application/json' },
-   body: JSON.stringify({ action, data }),
- });
-function doGet(e) {
-  // Your existing logic for fetching data
-  var result = { success: true, data: /* your data here */ }; // Replace with your actual data fetching logic
-
-  var output = ContentService.createTextOutput(JSON.stringify(result));
-  output.setMimeType(ContentService.MimeType.JSON);
-  // Allow requests from any origin. For production, consider replacing '*' with your GitHub Pages domain (e.g., 'https://yourusername.github.io').
-  output.setAccessControlAllowOrigin('*');
-  return output;
-}
-
-function doPost(e) {
-  var response = {};
-  try {
-    // Parse the incoming JSON data
-    var requestData = JSON.parse(e.postData.contents);
-    var action = requestData.action;
-    var data = requestData.data;
-
-    // Your existing logic for handling actions (e.g., saveParticipant, addParticipant)
-    if (action === 'saveParticipant') {
-      // Implement your saveParticipant logic here
-      response.message = "Participant saved successfully.";
-    } else if (action === 'addParticipant') {
-      // Implement your addParticipant logic here
-      response.message = "Participant added successfully.";
-    } else {
-      throw new Error("Unknown action: " + action);
-    }
-
-    response.success = true;
-  } catch (error) {
-    response.success = false;
-    response.error = error.message;
-  }
-
-  var output = ContentService.createTextOutput(JSON.stringify(response));
-  output.setMimeType(ContentService.MimeType.JSON);
-  // Allow requests from any origin. For production, consider replacing '*' with your GitHub Pages domain.
-  output.setAccessControlAllowOrigin('*');
-  return output;
-}
+</html>
