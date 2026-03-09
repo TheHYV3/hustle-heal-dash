@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Hustle &amp; Heal Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body{height:100%}
+    body{background:#f8f9fb;font-family:'DM Sans',sans-serif}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    button:hover{opacity:.88}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwkgx6n0DeGF8z2zXKm21LoGy5wBHGR-7jY266fdzcDIuGJSPvQEnjp8NoDwBPbjgI/exec";
+
+async function fetchAllData() {
+  const res = await fetch(SCRIPT_URL);
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error || "Failed to load data");
+  return json.data;
+}
+
+async function postAction(action, data) {
+  const res = await fetch(SCRIPT_URL, {
+    method: 'POST',
+    mode: 'no-cors',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, data }),
+  });
+  return res;
+}
+
+function parseParticipant(r) {
+  return {
+    id:r['ID']||'', name:r['Name']||'', age:parseInt(r['Age'])||0,
+    gender:r['Gender']||'', race:r['Race/Ethnicity']||'', zip:r['Zip']||'',
+    skill:r['Skill Track']||'', status:r['Status']||'waiting',
+    referral:r['Referral Source']||'', cohort:r['Cohort']||'',
+    caregiver:r['Caregiver']||'', phone:r['Phone']||'',
+    preConf:r['Pre-Confidence']!==''?Number(r['Pre-Confidence']):null,
+    postConf:r['Post-Confidence']!==''?Number(r['Post-Confidence']):null,
+    certEarned:r['Cert Earned']==='TRUE'||r['Cert Earned']===true,
+    attendance:parseFloat(r['Attendance %'])||0,
+    stipend:parseFloat(r['Stipend Paid'])||0,
+    enrollDate:r['Enroll Date']||'', notes:r['Notes']||'',
+    forms:{
+      consent:r['Form: Consent']||'', preSurvey:r['Form: Pre-Survey']||'',
+      postSurvey:r['Form: Post-Survey']||'', midReview:r['Form: Mid Review']||'',
+      finalReview:r['Form: Final Review']||'',
+    },
+    transportation:r['Transportation']==='TRUE'||r['Transportation']===true,
+    cycleId:r['Cycle ID']||'CYC-003',
+  };
+}
+function parseAttendance(r) {
+  return {
+    id:r['Record ID']||'', youthId:r['Youth ID']||'', name:r['Name']||'',
+    date:r['Date']||'', skill:r['Skill Track']||'',
+    present:r['Present (Y/N)']||'N',
+    engagement:r['Engagement (1-5)']!==''?Number(r['Engagement (1-5)']):null,
+    followUp:r['Follow-Up Needed (Y/N)']||'N', cycleId:r['Cycle ID']||'',
+  };
+}
+function parseStipend(r) {
+  return {
+    id:r['Record ID']||'', youthId:r['Youth ID']||'', name:r['Name']||'',
+    eligible:parseFloat(r['Eligible ($)'])||0, hours:parseFloat(r['Hours'])||0,
+    earned:parseFloat(r['Earned ($)'])||0, paid:parseFloat(r['Paid ($)'])||0,
+    paidDate:r['Paid Date']||'', method:r['Method']||'',
+    rate:parseFloat(r['Accountability Rate'])||0, cycleId:r['Cycle ID']||'',
+  };
+}
+
+const F={display:"'Syne',sans-serif",ui:"'DM Sans',sans-serif"};
+const C={
+  teal:'#15a3c7',tealDark:'#0d7a99',tealDeep:'#0e4f5c',tealGhost:'#e6f6fa',
+  green:'#1e8c5a',greenBg:'#e8f5ee',amber:'#d97706',amberBg:'#fef3c7',
+  red:'#c0392b',redBg:'#fdecea',slate:'#64748b',slateBg:'#f1f5f9',
+  brown:'#78584a',brownBg:'#f5ede8',
+};
+const TH={
+  light:{bg:'#f8f9fb',surface:'#ffffff',raised:'#f0f4f8',secondary:'#f4f7fa',border:'#e2e8f0',text:'#1e293b',textSec:'#475569',muted:'#94a3b8',altRow:'#f8fafc'},
+  dark:{bg:'#0f172a',surface:'#1e293b',raised:'#263347',secondary:'#1a2540',border:'#334155',text:'#f1f5f9',textSec:'#94a3b8',muted:'#64748b',altRow:'#162032'},
+};
+const CHART_COLORS=['#15a3c7','#d97706','#1e8c5a','#7c3aed','#0d7a99','#0891b2','#c0392b','#78584a'];
+const STATUS_CFG={
+  waiting:{label:"Waiting",color:C.amber,bg:C.amberBg},
+  "no-response":{label:"No Response",color:C.slate,bg:C.slateBg},
+  "next-cohort":{label:"Next Cohort",color:C.brown,bg:C.brownBg},
+  enrolled:{label:"Enrolled",color:C.teal,bg:C.tealGhost},
+  active:{label:"Active",color:C.green,bg:C.greenBg},
+  completed:{label:"Completed",color:C.tealDeep,bg:C.tealGhost},
+  withdrawn:{label:"Withdrawn",color:C.red,bg:C.redBg},
+};
+const SKILLS=["Hair","Makeup","Nails","Auto-mechanics","Graphic Design & T-shirt Printing","Barbering"];
+const SOURCES=["Court","Community","School","Self-Referral"];
+const STATUSES=["waiting","no-response","next-cohort","enrolled","active","completed","withdrawn"];
+const GENDERS=["Female","Male","Non-binary","Prefer not to say"];
+const RACES=["Black/African American","Hispanic/Latino","White","Asian","Multiracial","Other"];
+const TABS=[{id:"home",label:"HOME",icon:"home"},{id:"participants",label:"PARTICIPANTS",icon:"users"},{id:"attendance",label:"ATTENDANCE",icon:"clipboard"},{id:"stipends",label:"STIPENDS",icon:"dollar"},{id:"trends",label:"TRENDS",icon:"trendUp"}];
+
+const Icon=({name,size=16,color="currentColor",strokeWidth=1.75})=>{
+  const s={width:size,height:size,display:"inline-block",flexShrink:0,verticalAlign:"middle"};
+  const p={fill:"none",stroke:color,strokeWidth,strokeLinecap:"round",strokeLinejoin:"round"};
+  const icons={
+    home:<><path {...p} d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5z"/><polyline {...p} points="9 21 9 12 15 12 15 21"/></>,
+    users:<><path {...p} d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle {...p} cx="9" cy="7" r="4"/><path {...p} d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></>,
+    clipboard:<><rect {...p} x="9" y="2" width="6" height="4" rx="1"/><path {...p} d="M9 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2h-3"/><line {...p} x1="9" y1="12" x2="15" y2="12"/><line {...p} x1="9" y1="16" x2="13" y2="16"/></>,
+    dollar:<><line {...p} x1="12" y1="1" x2="12" y2="23"/><path {...p} d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></>,
+    trendUp:<><polyline {...p} points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline {...p} points="17 6 23 6 23 12"/></>,
+    user:<><path {...p} d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle {...p} cx="12" cy="7" r="4"/></>,
+    fileText:<><path {...p} d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline {...p} points="14 2 14 8 20 8"/><line {...p} x1="16" y1="13" x2="8" y2="13"/><line {...p} x1="16" y1="17" x2="8" y2="17"/></>,
+    sun:<><circle {...p} cx="12" cy="12" r="5"/><line {...p} x1="12" y1="1" x2="12" y2="3"/><line {...p} x1="12" y1="21" x2="12" y2="23"/><line {...p} x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line {...p} x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line {...p} x1="1" y1="12" x2="3" y2="12"/><line {...p} x1="21" y1="12" x2="23" y2="12"/><line {...p} x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line {...p} x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></>,
+    moon:<><path {...p} d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></>,
+    refresh:<><polyline {...p} points="23 4 23 10 17 10"/><polyline {...p} points="1 20 1 14 7 14"/><path {...p} d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></>,
+    x:<><line {...p} x1="18" y1="6" x2="6" y2="18"/><line {...p} x1="6" y1="6" x2="18" y2="18"/></>,
+    check:<><polyline {...p} points="20 6 9 17 4 12"/></>,
+    alertCircle:<><circle {...p} cx="12" cy="12" r="10"/><line {...p} x1="12" y1="8" x2="12" y2="12"/><line {...p} x1="12" y1="16" x2="12.01" y2="16"/></>,
+    plusCircle:<><circle {...p} cx="12" cy="12" r="10"/><line {...p} x1="12" y1="8" x2="12" y2="16"/><line {...p} x1="8" y1="12" x2="16" y2="12"/></>,
+  };
+  return <svg viewBox="0 0 24 24" style={s} aria-hidden="true">{icons[name]||null}</svg>;
+};
+
+function CJSPie({data,height=200}){
+  const ref=useRef(null);const inst=useRef(null);
+  useEffect(()=>{
+    if(!ref.current||!data||!data.length)return;
+    if(inst.current)inst.current.destroy();
+    inst.current=new Chart(ref.current,{type:'doughnut',data:{labels:data.map(d=>d.label),datasets:[{data:data.map(d=>d.count),backgroundColor:CHART_COLORS,borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{font:{family:"'DM Sans',sans-serif",size:11},padding:10,boxWidth:12}}}}});
+    return()=>{if(inst.current)inst.current.destroy();};
+  },[JSON.stringify(data)]);
+  if(!data||!data.length)return <div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:C.slate,fontSize:12}}>No data yet</div>;
+  return <div style={{height,position:"relative"}}><canvas ref={ref}/></div>;
+}
+function CJSBar({data,color,height=200}){
+  const ref=useRef(null);const inst=useRef(null);
+  useEffect(()=>{
+    if(!ref.current||!data||!data.length)return;
+    if(inst.current)inst.current.destroy();
+    inst.current=new Chart(ref.current,{type:'bar',data:{labels:data.map(d=>d.label),datasets:[{data:data.map(d=>d.count),backgroundColor:color||C.teal,borderRadius:6,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{family:"'DM Sans',sans-serif",size:11}},grid:{display:false}},y:{ticks:{font:{family:"'DM Sans',sans-serif",size:11}},beginAtZero:true}}}});
+    return()=>{if(inst.current)inst.current.destroy();};
+  },[JSON.stringify(data),color]);
+  if(!data||!data.length)return <div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:C.slate,fontSize:12}}>No data yet</div>;
+  return <div style={{height,position:"relative"}}><canvas ref={ref}/></div>;
+}
+function CJSTrendBar({data,dataKey,color,height=200}){
+  const ref=useRef(null);const inst=useRef(null);
+  useEffect(()=>{
+    if(!ref.current||!data||!data.length)return;
+    if(inst.current)inst.current.destroy();
+    inst.current=new Chart(ref.current,{type:'bar',data:{labels:data.map(d=>d.cycleName),datasets:[{data:data.map(d=>d[dataKey]),backgroundColor:color,borderRadius:6,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{family:"'DM Sans',sans-serif",size:11}},grid:{display:false}},y:{ticks:{font:{family:"'DM Sans',sans-serif",size:11}},beginAtZero:true}}}});
+    return()=>{if(inst.current)inst.current.destroy();};
+  },[JSON.stringify(data),dataKey,color]);
+  if(!data||!data.length)return <div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:C.slate,fontSize:12}}>No data yet</div>;
+  return <div style={{height,position:"relative"}}><canvas ref={ref}/></div>;
+}
+function CJSLine({data,dataKey,color,height=200,yMax}){
+  const ref=useRef(null);const inst=useRef(null);
+  useEffect(()=>{
+    if(!ref.current||!data||!data.length)return;
+    if(inst.current)inst.current.destroy();
+    inst.current=new Chart(ref.current,{type:'line',data:{labels:data.map(d=>d.cycleName),datasets:[{data:data.map(d=>d[dataKey]),borderColor:color,backgroundColor:color+'22',borderWidth:3,pointRadius:5,pointBackgroundColor:color,tension:0.3,fill:true}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{family:"'DM Sans',sans-serif",size:11}},grid:{display:false}},y:{ticks:{font:{family:"'DM Sans',sans-serif",size:11}},beginAtZero:true,...(yMax?{max:yMax}:{})}}}});
+    return()=>{if(inst.current)inst.current.destroy();};
+  },[JSON.stringify(data),dataKey,color]);
+  if(!data||!data.length)return <div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:C.slate,fontSize:12}}>No data yet</div>;
+  return <div style={{height,position:"relative"}}><canvas ref={ref}/></div>;
+}
+
+const ChartCard=({title,children,dm})=>{const th=dm?TH.dark:TH.light;return <div style={{background:th.surface,borderRadius:10,padding:"18px 20px",border:`1px solid ${th.border}`,boxShadow:`0 1px 4px rgba(0,0,0,${dm?.12:.06})`}}><h3 style={{fontFamily:F.ui,fontSize:11,fontWeight:700,color:th.muted,textTransform:"uppercase",letterSpacing:.8,marginBottom:14}}>{title}</h3>{children}</div>;};
+const Badge=({status})=>{const s=STATUS_CFG[status]||STATUS_CFG.waiting;return <span style={{display:"inline-block",padding:"3px 10px",borderRadius:6,fontSize:11,fontWeight:600,fontFamily:F.ui,background:s.bg,color:s.color,border:`1px solid ${s.color}33`,whiteSpace:"nowrap",textTransform:"uppercase",letterSpacing:.6}}>{s.label}</span>;};
+const AttBar=({pct,dm})=>{if(!pct)return <span style={{color:dm?TH.dark.muted:TH.light.muted,fontSize:12}}>--</span>;const bc=pct>=80?C.green:pct>=60?C.amber:C.red;return <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{flex:1,height:6,background:dm?TH.dark.border:TH.light.border,borderRadius:3,overflow:"hidden",minWidth:50}}><div style={{width:`${pct}%`,height:"100%",background:bc,borderRadius:3}}/></div><span style={{fontSize:12,fontWeight:600,color:bc,minWidth:32}}>{pct}%</span></div>;};
+const Spinner=({dm})=><div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:60,gap:16}}><div style={{width:40,height:40,borderRadius:"50%",border:`3px solid ${dm?TH.dark.border:TH.light.border}`,borderTopColor:C.teal,animation:"spin 0.8s linear infinite"}}/><div style={{fontSize:13,fontWeight:500,color:C.teal,textTransform:"uppercase",letterSpacing:.5}}>Loading data...</div></div>;
+const ErrorBanner=({message,onRetry})=><div style={{background:C.redBg,border:`1.5px solid ${C.red}44`,borderRadius:10,padding:"16px 20px",margin:"20px 0",display:"flex",alignItems:"center",justifyContent:"space-between",gap:16,flexWrap:"wrap"}}><div><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:4}}>Connection Error</div><div style={{fontSize:13,color:"#7f1d1d"}}>{message}</div></div><button onClick={onRetry} style={{padding:"8px 18px",background:C.red,color:"white",border:"none",borderRadius:7,fontSize:13,fontWeight:600,cursor:"pointer"}}>Retry</button></div>;
+const Modal=({open,onClose,title,subtitle,children,dm,wide})=>{if(!open)return null;const th=dm?TH.dark:TH.light;return <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(15,23,42,0.65)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><div onClick={e=>e.stopPropagation()} style={{background:th.surface,borderRadius:12,maxWidth:wide?960:660,width:"100%",maxHeight:"90vh",overflowY:"auto",boxShadow:"0 24px 64px rgba(0,0,0,0.3)"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"18px 24px",borderBottom:`1px solid ${th.border}`}}><div><h2 style={{fontFamily:F.ui,fontSize:17,fontWeight:700,color:th.text,margin:0}}>{title}</h2>{subtitle&&<div style={{fontSize:12,color:th.muted,marginTop:2}}>{subtitle}</div>}</div><button onClick={onClose} style={{background:"none",border:"none",padding:6,cursor:"pointer",display:"flex",borderRadius:6}}><Icon name="x" size={18} color={th.muted}/></button></div><div style={{padding:"20px 24px"}}>{children}</div></div></div>;};
+const Sect=({title,icon,children,dm})=>{const th=dm?TH.dark:TH.light;return <div style={{marginBottom:14,padding:"14px 16px",background:th.raised,borderRadius:8,borderLeft:`3px solid ${C.teal}`}}><h3 style={{fontFamily:F.ui,fontSize:12,fontWeight:700,color:C.teal,textTransform:"uppercase",letterSpacing:.8,marginBottom:12,display:"flex",alignItems:"center",gap:6}}><Icon name={icon} size={13} color={C.teal}/>{title}</h3>{children}</div>;};
+const Lbl=({children})=><div style={{fontWeight:600,fontFamily:F.ui,color:TH.light.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>{children}</div>;
+const Inp=({value,onChange,placeholder,type,dm,style:extra,...rest})=>{const th=dm?TH.dark:TH.light;return <input type={type||"text"} value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{width:"100%",padding:"8px 10px",border:`1.5px solid ${th.border}`,borderRadius:6,fontSize:13,fontFamily:F.ui,background:th.surface,color:th.text,boxSizing:"border-box",...extra}} {...rest}/>;};
+const Sel=({value,onChange,options,placeholder,dm})=>{const th=dm?TH.dark:TH.light;return <select value={value||""} onChange={e=>onChange(e.target.value)} style={{width:"100%",padding:"8px 10px",border:`1.5px solid ${th.border}`,borderRadius:6,fontSize:13,fontFamily:F.ui,background:th.surface,color:th.text,boxSizing:"border-box"}}>{placeholder&&<option value="">{placeholder}</option>}{options.map(o=>{const v=typeof o==='string'?o:o.value;return <option key={v} value={v}>{typeof o==='string'?o:o.label}</option>;})}</select>;};
+const Btn=({children,onClick,primary,dm,small,loading,danger,full})=><button onClick={onClick} disabled={loading} style={{padding:small?"6px 14px":"9px 22px",border:"none",borderRadius:7,fontFamily:F.ui,fontSize:small?12:14,fontWeight:600,cursor:loading?"wait":"pointer",width:full?"100%":"auto",background:danger?C.red:primary?C.teal:dm?TH.dark.raised:TH.light.border,color:primary||danger?"white":dm?TH.dark.text:TH.light.textSec,opacity:loading?.7:1}}>{loading?"Saving...":children}</button>;
+
+function HomeTab({data,attData,stipData,dm}){
+  const th=dm?TH.dark:TH.light;
+  const ap=data.filter(p=>p.status==="active");const cp=data.filter(p=>p.status==="completed");
+  const tracked=data.filter(p=>["active","completed"].includes(p.status));
+  const totStip=stipData.reduce((s,st)=>s+st.paid,0);
+  const wg=tracked.filter(p=>p.preConf&&p.postConf);
+  const avgG=wg.length>0?(wg.reduce((s,p)=>s+(p.postConf-p.preConf),0)/wg.length).toFixed(1):0;
+  const totalAtt=attData.length,presC=attData.filter(a=>a.present==="Y").length;
+  const attRate=totalAtt>0?Math.round((presC/totalAtt)*100):0;
+  const yAtt={};attData.forEach(a=>{if(!yAtt[a.youthId])yAtt[a.youthId]={total:0,present:0};yAtt[a.youthId].total++;if(a.present==="Y")yAtt[a.youthId].present++;});
+  const yIds=Object.keys(yAtt);
+  const cons=yIds.filter(id=>yAtt[id].total>0&&(yAtt[id].present/yAtt[id].total)>=.8).length;
+  const consRate=yIds.length>0?Math.round((cons/yIds.length)*100):0;
+  const cert=tracked.filter(p=>p.certEarned).length;
+  const acc=[C.teal,C.green,C.teal,C.green,C.tealDark,C.amber,C.teal,C.green];
+  const tiles=[
+    {v:data.length,l:"Total Referrals",sub:"all time"},
+    {v:ap.length,l:"Currently Active",sub:"this cycle"},
+    {v:`${attRate}%`,l:"Attendance Rate",sub:"sessions recorded"},
+    {v:`${data.length>0?Math.round((cp.length/data.length)*100):0}%`,l:"Completion Rate",sub:"of enrolled"},
+    {v:`${tracked.length>0?Math.round((cert/tracked.length)*100):0}%`,l:"Certification Rate",sub:"of active/completed"},
+    {v:`$${totStip.toLocaleString()}`,l:"Stipends Paid",sub:"total disbursed"},
+    {v:`+${avgG}`,l:"Confidence Growth",sub:"avg pre to post"},
+    {v:`${consRate}%`,l:"Consistency 80%+",sub:"of tracked youth"},
+  ];
+  const skillD=SKILLS.map(s=>({label:s,count:data.filter(p=>p.skill===s).length})).filter(x=>x.count>0);
+  const refD=SOURCES.map(s=>({label:s,count:data.filter(p=>p.referral===s).length})).filter(x=>x.count>0);
+  const genD=GENDERS.map(g=>({label:g,count:data.filter(p=>p.gender===g).length})).filter(x=>x.count>0);
+  const raceD=RACES.map(r=>({label:r,count:data.filter(p=>p.race===r).length})).filter(x=>x.count>0);
+  return(
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(155px,1fr))",gap:12,marginBottom:28}}>
+        {tiles.map((t,i)=>(
+          <div key={i} style={{background:th.surface,borderRadius:10,padding:"18px 16px",boxShadow:`0 1px 4px rgba(0,0,0,${dm?.1:.05})`,border:`1px solid ${th.border}`,borderTop:`3px solid ${acc[i]}`}}>
+            <div style={{fontFamily:F.display,fontSize:36,fontWeight:800,color:th.text,lineHeight:1,marginBottom:4}}>{t.v}</div>
+            <div style={{fontFamily:F.ui,fontSize:13,fontWeight:600,color:th.textSec,lineHeight:1.3}}>{t.l}</div>
+            <div style={{fontFamily:F.ui,fontSize:11,color:th.muted,marginTop:2}}>{t.sub}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:14}}>
+        <ChartCard title="Skill Track Breakdown" dm={dm}><CJSPie data={skillD}/></ChartCard>
+        <ChartCard title="Referral Source" dm={dm}><CJSPie data={refD}/></ChartCard>
+        <ChartCard title="Gender Breakdown" dm={dm}><CJSPie data={genD}/></ChartCard>
+        <ChartCard title="Race / Ethnicity" dm={dm}><CJSBar data={raceD} color={C.tealDark}/></ChartCard>
+      </div>
+    </div>
+  );
+}
+
+function ParticipantsTab({data,onSave,onAdd,dm}){
+  const th=dm?TH.dark:TH.light;
+  const [search,setSearch]=useState("");const [filter,setFilter]=useState("all");
+  const [selected,setSelected]=useState(null);const [draft,setDraft]=useState(null);
+  const [adding,setAdding]=useState(false);const [saving,setSaving]=useState(false);
+  const counts={};STATUSES.forEach(k=>{counts[k]=0;});data.forEach(p=>{counts[p.status]=(counts[p.status]||0)+1;});
+  const filtered=data.filter(p=>(p.name.toLowerCase().includes(search.toLowerCase())||p.id.toLowerCase().includes(search.toLowerCase()))&&(filter==="all"||p.status===filter));
+  const openD=p=>{setDraft({...p,forms:{...p.forms}});setSelected(p.id);};
+  const closeD=()=>{setSelected(null);setDraft(null);};
+  const saveD=async()=>{setSaving(true);try{await onSave(draft);closeD();}catch(e){alert("Save failed: "+e.message);}finally{setSaving(false);}};
+  const ud=(k,v)=>setDraft(prev=>({...prev,[k]:v}));
+  const udf=(k,v)=>setDraft(prev=>({...prev,forms:{...prev.forms,[k]:v}}));
+  const [newP,setNewP]=useState({name:"",age:"",gender:"",race:"",zip:"",skill:"",referral:"",caregiver:"",phone:"",notes:"",status:"waiting"});
+  const addRef=async()=>{
+    if(!newP.name||!newP.age||!newP.skill||!newP.referral){alert("Name, Age, Skill Track and Referral Source are required.");return;}
+    setSaving(true);
+    try{await onAdd(newP);setNewP({name:"",age:"",gender:"",race:"",zip:"",skill:"",referral:"",caregiver:"",phone:"",notes:"",status:"waiting"});setAdding(false);}
+    catch(e){alert("Add failed: "+e.message);}finally{setSaving(false);}
+  };
+  return(
+    <div>
+      <div style={{background:th.surface,borderRadius:14,padding:"20px 24px",marginBottom:20,boxShadow:`0 3px 18px rgba(44,95,93,${dm?.12:.08})`}}>
+        <h3 style={{fontFamily:F.ui,fontSize:13,fontWeight:700,color:th.textSec,textTransform:"uppercase",letterSpacing:.8,marginBottom:16}}>Enrollment Pipeline</h3>
+        {data.length>0&&<div style={{display:"flex",gap:0,borderRadius:10,overflow:"hidden",height:44,marginBottom:16}}>
+          {STATUSES.map(k=>{const c=counts[k]||0;if(!c)return null;const s=STATUS_CFG[k];return<div key={k} onClick={()=>setFilter(filter===k?"all":k)} style={{width:`${(c/data.length)*100}%`,minWidth:44,background:s.color,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",opacity:filter==="all"||filter===k?1:.35,transition:"opacity .2s"}}><span style={{color:"white",fontSize:16,fontWeight:700,lineHeight:1}}>{c}</span><span style={{color:"rgba(255,255,255,.8)",fontSize:9,textTransform:"uppercase"}}>{s.label.split(" ")[0]}</span></div>;})}
+        </div>}
+        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+          <button onClick={()=>setFilter("all")} style={{padding:"5px 14px",borderRadius:20,border:`1.5px solid ${filter==="all"?C.teal:th.border}`,background:filter==="all"?C.teal:"transparent",color:filter==="all"?"white":th.muted,fontSize:11,fontWeight:600,fontFamily:F.ui,cursor:"pointer"}}>All ({data.length})</button>
+          {STATUSES.map(k=>{const s=STATUS_CFG[k];return<button key={k} onClick={()=>setFilter(filter===k?"all":k)} style={{padding:"5px 14px",borderRadius:20,border:`1.5px solid ${filter===k?s.color:th.border}`,background:filter===k?s.bg:"transparent",color:filter===k?s.color:th.muted,fontSize:11,fontWeight:700,cursor:"pointer"}}>{s.label} ({counts[k]||0})</button>;})}
+        </div>
+      </div>
+      <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:250}}><input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by name or Youth ID..." style={{width:"100%",padding:"10px 16px",border:`2px solid ${th.border}`,borderRadius:10,fontSize:14,fontFamily:F.ui,background:th.surface,color:th.text,outline:"none",boxSizing:"border-box"}}/></div>
+        <Btn primary onClick={()=>setAdding(true)} dm={dm}><span style={{display:"inline-flex",alignItems:"center",gap:6}}><Icon name="plusCircle" size={14} color="white"/>Add Referral</span></Btn>
+      </div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,fontFamily:F.ui}}>
+          <thead><tr>{["Youth ID","Name","Age","Status","Skill Track","Source","Cohort","Attendance"].map(h=><th key={h} style={{background:th.raised,color:th.muted,padding:"10px 12px",textAlign:"left",fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",whiteSpace:"nowrap",borderBottom:`2px solid ${th.border}`}}>{h}</th>)}</tr></thead>
+          <tbody>{filtered.map((p,i)=><tr key={p.id} onClick={()=>openD(p)} style={{background:i%2===0?th.surface:th.altRow,cursor:"pointer"}}><td style={{padding:"10px 12px",fontWeight:700,color:C.teal}}>{p.id}</td><td style={{padding:"10px 12px",whiteSpace:"nowrap"}}>{p.name}</td><td style={{padding:"10px 12px",textAlign:"center"}}>{p.age}</td><td style={{padding:"10px 12px"}}><Badge status={p.status}/></td><td style={{padding:"10px 12px",fontSize:12}}>{p.skill}</td><td style={{padding:"10px 12px",fontSize:12}}>{p.referral}</td><td style={{padding:"10px 12px",fontSize:12}}>{p.cohort||"--"}</td><td style={{padding:"10px 12px",minWidth:100}}><AttBar pct={p.attendance} dm={dm}/></td></tr>)}</tbody>
+        </table>
+      </div>
+      <Modal open={!!selected&&!!draft} onClose={closeD} title={draft?.name||""} subtitle={`ID: ${draft?.id||""}`} dm={dm} wide>
+        {draft&&<>
+          <Sect title="YOUTH INFORMATION" icon="user" dm={dm}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div><Lbl>Phone</Lbl><Inp value={draft.phone} onChange={v=>ud("phone",v)} dm={dm}/></div>
+              <div><Lbl>Age</Lbl><Inp value={draft.age} onChange={v=>ud("age",parseInt(v)||"")} dm={dm} type="number"/></div>
+              <div><Lbl>Gender</Lbl><Sel value={draft.gender} onChange={v=>ud("gender",v)} options={GENDERS} dm={dm}/></div>
+              <div><Lbl>Race/Ethnicity</Lbl><Sel value={draft.race} onChange={v=>ud("race",v)} options={RACES} dm={dm}/></div>
+              <div><Lbl>Zip Code</Lbl><Inp value={draft.zip} onChange={v=>ud("zip",v)} dm={dm}/></div>
+              <div><Lbl>Caregiver</Lbl><Inp value={draft.caregiver} onChange={v=>ud("caregiver",v)} dm={dm}/></div>
+            </div>
+            <div style={{marginTop:12}}><Lbl>Notes</Lbl><textarea value={draft.notes||""} onChange={e=>ud("notes",e.target.value)} style={{width:"100%",minHeight:60,padding:"8px 10px",border:`2px solid ${th.border}`,borderRadius:6,fontSize:13,fontFamily:F.ui,background:th.secondary,color:th.text,resize:"vertical",boxSizing:"border-box"}}/></div>
+          </Sect>
+          <Sect title="PROGRAM STATUS" icon="clipboard" dm={dm}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div><Lbl>Status</Lbl><Sel value={draft.status} onChange={v=>ud("status",v)} options={STATUSES.map(s=>({value:s,label:STATUS_CFG[s].label}))} dm={dm}/></div>
+              <div><Lbl>Skill Track</Lbl><Sel value={draft.skill} onChange={v=>ud("skill",v)} options={SKILLS} dm={dm}/></div>
+              <div><Lbl>Referral Source</Lbl><Sel value={draft.referral} onChange={v=>ud("referral",v)} options={SOURCES} dm={dm}/></div>
+              <div><Lbl>Cohort</Lbl><Inp value={draft.cohort} onChange={v=>ud("cohort",v)} dm={dm}/></div>
+            </div>
+            <div style={{marginTop:12,display:"flex",gap:16,flexWrap:"wrap"}}>
+              <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:th.text,cursor:"pointer"}}><input type="checkbox" checked={!!draft.transportation} onChange={e=>ud("transportation",e.target.checked)} style={{width:18,height:18}}/>Transportation Confirmed</label>
+              <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:th.text,cursor:"pointer"}}><input type="checkbox" checked={!!draft.certEarned} onChange={e=>ud("certEarned",e.target.checked)} style={{width:18,height:18}}/>Certification Earned</label>
+            </div>
+          </Sect>
+          <Sect title="FORMS & DOCUMENTATION" icon="fileText" dm={dm}>
+            <div style={{display:"grid",gap:8}}>
+              {[["Consent Form","consent"],["Pre-Survey","preSurvey"],["Post-Survey","postSurvey"],["Mid Review","midReview"],["Final Review","finalReview"]].map(([label,key])=>(
+                <div key={key} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:th.secondary,borderRadius:8,borderLeft:`3px solid ${draft.forms[key]?C.green:C.amber}`}}>
+                  <div style={{flex:1,fontWeight:600,color:draft.forms[key]?C.green:C.amber,fontSize:13}}>{label}</div>
+                  <div style={{width:150}}><Inp value={draft.forms[key]} onChange={v=>udf(key,v)} dm={dm} placeholder="MM/DD/YYYY"/></div>
+                  <div style={{width:24,height:24,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",background:draft.forms[key]?C.greenBg:C.amberBg,border:`1.5px solid ${draft.forms[key]?C.green:C.amber}`,flexShrink:0}}>{draft.forms[key]?<Icon name="check" size={13} color={C.green}/>:<Icon name="alertCircle" size={13} color={C.amber}/>}</div>
+                </div>
+              ))}
+            </div>
+            {(()=>{const items=Object.values(draft.forms);const done=items.filter(Boolean).length;const pct=Math.round((done/items.length)*100);return<div style={{marginTop:12}}><div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}><span style={{fontWeight:700,color:C.teal}}>{done}/{items.length} Complete</span><span style={{fontWeight:700,color:pct===100?C.green:C.amber}}>{pct}%</span></div><div style={{height:6,background:dm?TH.dark.border:TH.light.border,borderRadius:3,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:pct===100?C.green:C.amber,borderRadius:3}}/></div></div>;})()}
+          </Sect>
+          <div style={{display:"flex",gap:12,justifyContent:"flex-end",paddingTop:16,borderTop:`1px solid ${th.border}`}}>
+            <Btn onClick={closeD} dm={dm}>Cancel</Btn>
+            <Btn primary onClick={saveD} dm={dm} loading={saving}>Save Changes</Btn>
+          </div>
+        </>}
+      </Modal>
+      <Modal open={adding} onClose={()=>setAdding(false)} title="ADD NEW REFERRAL" dm={dm}>
+        <Sect title="YOUTH INFORMATION" icon="user" dm={dm}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div style={{gridColumn:"1/3"}}><Lbl>Full Name *</Lbl><Inp value={newP.name} onChange={v=>setNewP(p=>({...p,name:v}))} dm={dm} placeholder="First and Last Name"/></div>
+            <div><Lbl>Age *</Lbl><Inp value={newP.age} onChange={v=>setNewP(p=>({...p,age:v}))} dm={dm} type="number"/></div>
+            <div><Lbl>Gender</Lbl><Sel value={newP.gender} onChange={v=>setNewP(p=>({...p,gender:v}))} options={GENDERS} placeholder="Select..." dm={dm}/></div>
+            <div><Lbl>Race/Ethnicity</Lbl><Sel value={newP.race} onChange={v=>setNewP(p=>({...p,race:v}))} options={RACES} placeholder="Select..." dm={dm}/></div>
+            <div><Lbl>Skill Track *</Lbl><Sel value={newP.skill} onChange={v=>setNewP(p=>({...p,skill:v}))} options={SKILLS} placeholder="Select..." dm={dm}/></div>
+            <div><Lbl>Referral Source *</Lbl><Sel value={newP.referral} onChange={v=>setNewP(p=>({...p,referral:v}))} options={SOURCES} placeholder="Select..." dm={dm}/></div>
+            <div><Lbl>Caregiver</Lbl><Inp value={newP.caregiver} onChange={v=>setNewP(p=>({...p,caregiver:v}))} dm={dm}/></div>
+            <div><Lbl>Phone</Lbl><Inp value={newP.phone} onChange={v=>setNewP(p=>({...p,phone:v}))} dm={dm}/></div>
+          </div>
+        </Sect>
+        <div style={{display:"flex",gap:12,justifyContent:"flex-end",paddingTop:16,borderTop:`1px solid ${th.border}`}}>
+          <Btn onClick={()=>setAdding(false)} dm={dm}>Cancel</Btn>
+          <Btn primary onClick={addRef} dm={dm} loading={saving}>Add Referral</Btn>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+function AttendanceTab({attData,dm}){
+  const th=dm?TH.dark:TH.light;
+  const [search,setSearch]=useState("");
+  const filtered=attData.filter(a=>a.name.toLowerCase().includes(search.toLowerCase())||a.youthId.toLowerCase().includes(search.toLowerCase()));
+  const yS={};attData.forEach(a=>{if(!yS[a.youthId])yS[a.youthId]={name:a.name,total:0,present:0};yS[a.youthId].total++;if(a.present==="Y")yS[a.youthId].present++;});
+  const sumD=Object.entries(yS).map(([id,s])=>({id,name:s.name,total:s.total,present:s.present,pct:s.total>0?Math.round((s.present/s.total)*100):0,consistent:s.total>0&&(s.present/s.total)>=.8}));
+  const presC=attData.filter(a=>a.present==="Y").length;
+  const attRate=attData.length>0?Math.round((presC/attData.length)*100):0;
+  const consRate=sumD.length>0?Math.round((sumD.filter(s=>s.consistent).length/sumD.length)*100):0;
+  const tiles=[{v:attData.length,l:"Total Records",c:C.teal},{v:presC,l:"Present",c:C.green},{v:attData.filter(a=>a.present==="N").length,l:"Absent",c:C.red},{v:attData.filter(a=>a.followUp==="Y").length,l:"Follow-Ups Needed",c:C.amber},{v:`${attRate}%`,l:"Attendance Rate",c:C.tealDark},{v:`${consRate}%`,l:"Consistency (80%+)",c:C.green}];
+  return(
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:14,marginBottom:20}}>
+        {tiles.map((t,i)=><div key={i} style={{background:th.surface,borderRadius:14,padding:"16px",textAlign:"center",boxShadow:`0 3px 18px rgba(44,95,93,${dm?.12:.08})`,borderTop:`4px solid ${t.c}`}}><div style={{fontFamily:F.display,fontSize:30,fontWeight:800,color:th.text,lineHeight:1}}>{t.v}</div><div style={{fontSize:12,fontWeight:600,color:th.textSec,marginTop:4}}>{t.l}</div></div>)}
+      </div>
+      {sumD.length>0&&<div style={{background:th.surface,borderRadius:14,padding:20,marginBottom:20,boxShadow:`0 3px 18px rgba(44,95,93,${dm?.12:.08})`}}>
+        <h3 style={{fontFamily:F.ui,fontSize:13,fontWeight:700,color:th.muted,textTransform:"uppercase",letterSpacing:.7,marginBottom:12}}>Attendance by Youth</h3>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:10}}>
+          {sumD.map(s=><div key={s.id} style={{padding:"12px 14px",borderRadius:10,background:th.raised,borderLeft:`3px solid ${s.consistent?C.green:s.pct>=60?C.amber:C.red}`}}><div style={{fontWeight:700,fontSize:13,color:th.text}}>{s.name}</div><div style={{fontSize:11,color:th.muted,marginBottom:6}}>{s.id} | {s.present}/{s.total} sessions</div><AttBar pct={s.pct} dm={dm}/></div>)}
+        </div>
+      </div>}
+      <input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by name or Youth ID..." style={{width:"100%",maxWidth:440,padding:"10px 16px",border:`2px solid ${th.border}`,borderRadius:10,fontSize:14,fontFamily:F.ui,background:th.surface,color:th.text,outline:"none",marginBottom:12,boxSizing:"border-box"}}/>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,fontFamily:F.ui}}>
+          <thead><tr>{["Record ID","Youth ID","Name","Date","Skill","Present","Engagement","Follow-Up"].map(h=><th key={h} style={{background:th.raised,color:th.muted,padding:"10px 12px",textAlign:"left",fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",borderBottom:`2px solid ${th.border}`}}>{h}</th>)}</tr></thead>
+          <tbody>{filtered.map((a,i)=><tr key={a.id} style={{background:i%2===0?th.surface:th.altRow}}><td style={{padding:"10px 12px",fontWeight:600,color:C.teal,fontSize:12}}>{a.id}</td><td style={{padding:"10px 12px",fontSize:12}}>{a.youthId}</td><td style={{padding:"10px 12px"}}>{a.name}</td><td style={{padding:"10px 12px"}}>{a.date}</td><td style={{padding:"10px 12px",fontSize:12}}>{a.skill}</td><td style={{padding:"10px 12px"}}><span style={{padding:"3px 10px",borderRadius:10,fontSize:11,fontWeight:700,background:a.present==="Y"?C.greenBg:C.redBg,color:a.present==="Y"?C.green:C.red}}>{a.present==="Y"?"PRESENT":"ABSENT"}</span></td><td style={{padding:"10px 12px",textAlign:"center"}}>{a.engagement||"--"}</td><td style={{padding:"10px 12px"}}>{a.followUp==="Y"?<span style={{color:C.amber,fontWeight:700}}>YES</span>:"No"}</td></tr>)}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function StipendsTab({stipData,dm}){
+  const th=dm?TH.dark:TH.light;
+  const tE=stipData.reduce((s,st)=>s+st.eligible,0);const tEa=stipData.reduce((s,st)=>s+st.earned,0);
+  const tP=stipData.reduce((s,st)=>s+st.paid,0);const aR=stipData.length>0?(stipData.reduce((s,st)=>s+st.rate,0)/stipData.length*100).toFixed(0):0;
+  const tiles=[{v:`$${tE.toLocaleString()}`,l:"Total Eligible",c:C.teal},{v:`$${tEa.toLocaleString()}`,l:"Total Earned",c:C.green},{v:`$${tP.toLocaleString()}`,l:"Total Paid",c:C.tealDeep},{v:`${aR}%`,l:"Avg Accountability Rate",c:C.amber}];
+  return(
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:14,marginBottom:20}}>
+        {tiles.map((t,i)=><div key={i} style={{background:th.surface,borderRadius:14,padding:"16px",textAlign:"center",boxShadow:`0 3px 18px rgba(44,95,93,${dm?.12:.08})`,borderTop:`4px solid ${t.c}`}}><div style={{fontFamily:F.display,fontSize:30,fontWeight:800,color:th.text,lineHeight:1}}>{t.v}</div><div style={{fontSize:12,fontWeight:600,color:th.textSec,marginTop:4}}>{t.l}</div></div>)}
+      </div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,fontFamily:F.ui}}>
+          <thead><tr>{["Record ID","Youth ID","Name","Eligible","Hours","Earned","Paid","Date","Method","Accountability"].map(h=><th key={h} style={{background:th.raised,color:th.muted,padding:"10px 12px",textAlign:"left",fontSize:11,fontWeight:700,letterSpacing:.7,textTransform:"uppercase",borderBottom:`2px solid ${th.border}`}}>{h}</th>)}</tr></thead>
+          <tbody>{stipData.map((s,i)=><tr key={s.id} style={{background:i%2===0?th.surface:th.altRow}}><td style={{padding:"10px 12px",fontWeight:600,color:C.teal,fontSize:12}}>{s.id}</td><td style={{padding:"10px 12px",fontSize:12}}>{s.youthId}</td><td style={{padding:"10px 12px"}}>{s.name}</td><td style={{padding:"10px 12px"}}>${s.eligible}</td><td style={{padding:"10px 12px",textAlign:"center"}}>{s.hours}</td><td style={{padding:"10px 12px"}}>${s.earned}</td><td style={{padding:"10px 12px",fontWeight:700}}>${s.paid}</td><td style={{padding:"10px 12px"}}>{s.paidDate}</td><td style={{padding:"10px 12px",fontSize:12}}>{s.method}</td><td style={{padding:"10px 12px"}}><span style={{fontWeight:700,color:s.rate>=.8?C.green:s.rate>=.6?C.amber:C.red}}>{(s.rate*100).toFixed(0)}%</span></td></tr>)}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TrendsTab({data,attData,stipData,dm}){
+  const CL={'CYC-001':'Fall 2025','CYC-002':'Winter 2026','CYC-003':'Spring 2026'};
+  const cycles=[...new Set([...data,...attData,...stipData].map(r=>r.cycleId).filter(Boolean))].sort();
+  const trends=cycles.map(cid=>{
+    const cp=data.filter(p=>p.cycleId===cid);const ca=attData.filter(a=>a.cycleId===cid);const cs=stipData.filter(s=>s.cycleId===cid);
+    const comp=cp.filter(p=>p.status==='completed');const cert=cp.filter(p=>p.certEarned);
+    const tr=cp.filter(p=>['active','completed'].includes(p.status));
+    const aR=ca.length>0?Math.round((ca.filter(a=>a.present==="Y").length/ca.length)*100):0;
+    const wg=tr.filter(p=>p.preConf&&p.postConf);
+    const aG=wg.length>0?(wg.reduce((s,p)=>s+(p.postConf-p.preConf),0)/wg.length).toFixed(1):0;
+    return{cycleName:CL[cid]||cid,enrollment:cp.length,attendanceRate:aR,completionRate:cp.length>0?Math.round((comp.length/cp.length)*100):0,certificationRate:tr.length>0?Math.round((cert.length/tr.length)*100):0,avgConfidenceGrowth:parseFloat(aG)||0,totalStipendsPaid:cs.reduce((s,st)=>s+st.paid,0)};
+  });
+  return(
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:18}}>
+      <ChartCard title="Enrollment by Cycle" dm={dm}><CJSTrendBar data={trends} dataKey="enrollment" color={C.teal}/></ChartCard>
+      <ChartCard title="Attendance Rate by Cycle" dm={dm}><CJSLine data={trends} dataKey="attendanceRate" color={C.tealDark} yMax={100}/></ChartCard>
+      <ChartCard title="Completion Rate by Cycle" dm={dm}><CJSLine data={trends} dataKey="completionRate" color={C.amber} yMax={100}/></ChartCard>
+      <ChartCard title="Certification Rate by Cycle" dm={dm}><CJSTrendBar data={trends} dataKey="certificationRate" color={C.green}/></ChartCard>
+      <ChartCard title="Avg Confidence Growth by Cycle" dm={dm}><CJSLine data={trends} dataKey="avgConfidenceGrowth" color={C.tealDeep}/></ChartCard>
+      <ChartCard title="Total Stipends Paid by Cycle" dm={dm}><CJSTrendBar data={trends} dataKey="totalStipendsPaid" color={C.amber}/></ChartCard>
+    </div>
+  );
+}
+
+function App(){
+  const [tab,setTab]=useState("home");const [dm,setDm]=useState(false);
+  const [participants,setParticipants]=useState([]);const [attData,setAttData]=useState([]);
+  const [stipData,setStipData]=useState([]);const [settings,setSettings]=useState({});
+  const [loading,setLoading]=useState(true);const [error,setError]=useState(null);
+  const th=dm?TH.dark:TH.light;
+  const loadData=useCallback(async()=>{
+    setLoading(true);setError(null);
+    try{
+      const r=await fetchAllData();
+      setParticipants((r.participants||[]).map(parseParticipant));
+      setAttData((r.attendance||[]).map(parseAttendance));
+      setStipData((r.stipends||[]).map(parseStipend));
+      setSettings(r.settings||{});
+    }catch(e){setError(e.message||"Could not connect to data.");}
+    finally{setLoading(false);}
+  },[]);
+  useEffect(()=>{loadData();},[loadData]);
+  const handleSave=async(d)=>{await postAction('saveParticipant',d);await loadData();};
+  const handleAdd=async(p)=>{await postAction('addParticipant',p);await loadData();};
+  const programName=settings['Program Name']||'Hustle & Heal';
+  const orgName=settings['Organization']||'Legacies Empowered';
+  const currentCycle=settings['Current Cycle']||'';
+  return(
+    <div style={{minHeight:"100vh",background:th.bg,fontFamily:F.ui,color:th.text}}>
+      <div style={{background:C.tealDeep,color:"white",padding:"18px 28px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+        <div>
+          <h1 style={{fontFamily:F.display,fontSize:26,fontWeight:800,margin:0,lineHeight:1.15,letterSpacing:.5}}>{programName.toUpperCase()} DASHBOARD</h1>
+          <div style={{fontSize:12,opacity:.85,marginTop:2}}>{orgName} Youth Workforce Program</div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          {currentCycle&&<div style={{background:"rgba(255,255,255,.18)",padding:"6px 18px",borderRadius:20,fontSize:13,fontWeight:700}}>{currentCycle}</div>}
+          <button onClick={loadData} title="Refresh" style={{background:"rgba(255,255,255,.2)",border:"none",color:"white",width:40,height:40,borderRadius:"50%",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Icon name="refresh" size={16} color="white"/></button>
+          <button onClick={()=>setDm(d=>!d)} title="Toggle dark mode" style={{background:"rgba(255,255,255,.2)",border:"none",color:"white",width:40,height:40,borderRadius:"50%",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Icon name={dm?"sun":"moon"} size={16} color="white"/></button>
+        </div>
+      </div>
+      <div style={{height:4,background:C.teal}}/>
+      <div style={{display:"flex",background:th.surface,borderBottom:`2px solid ${th.border}`,padding:"0 28px",overflowX:"auto"}}>
+        {TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{fontFamily:F.ui,fontSize:13,fontWeight:600,padding:"13px 20px",border:"none",background:"transparent",cursor:"pointer",whiteSpace:"nowrap",color:tab===t.id?C.teal:th.muted,borderBottom:tab===t.id?`2px solid ${C.teal}`:"2px solid transparent",transition:"color .2s"}}><span style={{display:"inline-flex",alignItems:"center",gap:6}}><Icon name={t.icon} size={14}/>{t.label}</span></button>)}
+      </div>
+      <div style={{maxWidth:1200,margin:"0 auto",padding:24}}>
+        {error&&<ErrorBanner message={error} onRetry={loadData}/>}
+        {loading?<Spinner dm={dm}/>:<>
+          {tab==="home"&&<HomeTab data={participants} attData={attData} stipData={stipData} dm={dm}/>}
+          {tab==="participants"&&<ParticipantsTab data={participants} onSave={handleSave} onAdd={handleAdd} dm={dm}/>}
+          {tab==="attendance"&&<AttendanceTab attData={attData} dm={dm}/>}
+          {tab==="stipends"&&<StipendsTab stipData={stipData} dm={dm}/>}
+          {tab==="trends"&&<TrendsTab data={participants} attData={attData} stipData={stipData} dm={dm}/>}
+        </>}
+      </div>
+      <div style={{textAlign:"center",padding:16,fontSize:11,color:th.muted,borderTop:`1px solid ${th.border}`,marginTop:24}}>
+        {programName} Dashboard | {orgName} | Built by Sun-Up Solutions
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
